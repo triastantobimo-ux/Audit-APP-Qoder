@@ -249,9 +249,9 @@ export async function listEntities(
   if (filters.q) {
     const query = filters.q.trim();
     where.OR = [
-      { name: { contains: query } },
-      { code: { contains: query.toUpperCase() } },
-      { description: { contains: query } },
+      { name: { contains: query, mode: "insensitive" } },
+      { code: { contains: query.toUpperCase(), mode: "insensitive" } },
+      { description: { contains: query, mode: "insensitive" } },
     ];
   }
 
