@@ -1,0 +1,591 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Workspace {
+  id          String           @id @default(cuid())
+  name        String
+  slug        String           @unique
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  memberships Membership[]
+  entities    AuditEntity[]
+  riskModels  RiskModel[]
+  cycles      RiskCycle[]
+  assessments RiskAssessment[]
+  plans       AuditPlan[]
+  engagements Engagement[]
+  auditEvents AuditEvent[]
+}
+
+model User {
+  id                    String                 @id @default(cuid())
+  email                 String                 @unique
+  name                  String
+  passwordHash          String
+  isActive              Boolean                @default(true)
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  memberships           Membership[]
+  sessions              Session[]
+  ownedEntities         AuditEntity[]          @relation("EntityOwner")
+  assessmentsAssessed   RiskAssessment[]       @relation("AssessmentAssessedBy")
+  assessmentsApproved   RiskAssessment[]       @relation("AssessmentApprovedBy")
+  plansOwned            AuditPlan[]            @relation("PlanOwner")
+  plansApproved         AuditPlan[]            @relation("PlanApprovedBy")
+  engagementsPrepared   Engagement[]           @relation("EngagementPreparer")
+  engagementsReviewed   Engagement[]           @relation("EngagementReviewer")
+  engagementsApproved   Engagement[]           @relation("EngagementApprover")
+  auditEvents           AuditEvent[]
+  engagementTransitions EngagementTransition[]
+  workpapersPrepared    Workpaper[]          @relation("WorkpaperPreparer")
+  workpapersReviewed    Workpaper[]          @relation("WorkpaperReviewer")
+  workpapersSignedOff   Workpaper[]          @relation("WorkpaperSignoff")
+  evidenceUploaded      EvidenceFile[]       @relation("EvidenceUploader")
+  evidenceDeleted       EvidenceFile[]       @relation("EvidenceDeleter")
+  notesAuthored         WorkpaperNote[]      @relation("NoteAuthor")
+  notesAssigned         WorkpaperNote[]      @relation("NoteAssignee")
+  notesResolved         WorkpaperNote[]      @relation("NoteResolver")
+  findingsOwned         Finding[]            @relation("FindingOwner")
+  findingsValidated     Finding[]            @relation("FindingValidator")
+  findingsRiskAccepted  Finding[]            @relation("FindingRiskAccepter")
+  findingUpdates        FindingUpdate[]      @relation("FindingUpdateAuthor")
+}
+
+model Membership {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        String
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId, role])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AuditEntity {
+  id              String                @id @default(cuid())
+  workspaceId     String
+  parentId        String?
+  code            String
+  name            String
+  type            String
+  status          String                @default("active")
+  ownerUserId     String?
+  description     String?
+  tags            String                @default("[]")
+  metadata        String                @default("{}")
+  depth           Int                   @default(0)
+  sortOrder       Int                   @default(0)
+  version         Int                   @default(1)
+  createdById     String?
+  updatedById     String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  archivedAt      DateTime?
+  workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent          AuditEntity?          @relation("EntityHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children        AuditEntity[]         @relation("EntityHierarchy")
+  ownerUser       User?                 @relation("EntityOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  assessments     RiskAssessment[]
+  planEngagements AuditPlanEngagement[]
+  engagements     Engagement[]
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, parentId, status])
+  @@index([workspaceId, status])
+}
+
+model RiskModel {
+  id                  String           @id @default(cuid())
+  workspaceId         String
+  name                String
+  description         String?
+  status              String           @default("draft")
+  scaleMin            Int              @default(1)
+  scaleMax            Int              @default(5)
+  controlReductionMax Float            @default(0.5)
+  levelThresholds     String
+  isDefault           Boolean          @default(false)
+  methodologyVersion  String           @default("v1")
+  version             Int              @default(1)
+  createdById         String?
+  approvedById        String?
+  approvedAt          DateTime?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  retiredAt           DateTime?
+  workspace           Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  factors             RiskFactor[]
+  assessments         RiskAssessment[]
+
+  @@unique([workspaceId, name, version])
+  @@index([workspaceId, status])
+}
+
+model RiskFactor {
+  id               String            @id @default(cuid())
+  riskModelId      String
+  code             String
+  name             String
+  description      String?
+  weight           Float
+  isRequired       Boolean           @default(true)
+  sortOrder        Int               @default(0)
+  riskModel        RiskModel         @relation(fields: [riskModelId], references: [id], onDelete: Cascade)
+  riskFactorScores RiskFactorScore[]
+
+  @@unique([riskModelId, code])
+  @@index([riskModelId, sortOrder])
+}
+
+model RiskCycle {
+  id          String           @id @default(cuid())
+  workspaceId String
+  name        String
+  periodStart DateTime
+  periodEnd   DateTime
+  status      String           @default("draft")
+  createdById String?
+  activatedAt DateTime?
+  closedAt    DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assessments RiskAssessment[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, status])
+}
+
+model RiskAssessment {
+  id                        String                 @id @default(cuid())
+  workspaceId               String
+  entityId                  String
+  cycleId                   String
+  riskModelId               String
+  status                    String                 @default("draft")
+  inherentScore             Float?
+  controlEffectivenessScore Float?
+  residualScore             Float?
+  riskLevel                 String?
+  rationale                 String?
+  isCurrent                 Boolean                @default(true)
+  supersedesId              String?
+  version                   Int                    @default(1)
+  submittedAt               DateTime?
+  approvedById              String?
+  approvedAt                DateTime?
+  assessedById              String?
+  assessedAt                DateTime?
+  calculatedAt              DateTime?
+  calculationVersion        String?
+  createdById               String?
+  updatedById               String?
+  createdAt                 DateTime               @default(now())
+  updatedAt                 DateTime               @updatedAt
+  workspace                 Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  entity                    AuditEntity            @relation(fields: [entityId], references: [id], onDelete: Restrict)
+  cycle                     RiskCycle              @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+  riskModel                 RiskModel              @relation(fields: [riskModelId], references: [id], onDelete: Restrict)
+  assessedBy                User?                  @relation("AssessmentAssessedBy", fields: [assessedById], references: [id], onDelete: SetNull)
+  approvedBy                User?                  @relation("AssessmentApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  factorScores              RiskFactorScore[]
+  reviews                   RiskAssessmentReview[]
+  planEngagements           AuditPlanEngagement[]
+  engagements               Engagement[]
+
+  @@unique([entityId, cycleId, version])
+  @@index([workspaceId, cycleId, status, residualScore])
+  @@index([entityId, cycleId])
+}
+
+model RiskFactorScore {
+  id           String         @id @default(cuid())
+  assessmentId String
+  riskFactorId String
+  score        Float
+  rationale    String?
+  evidenceNote String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  assessment   RiskAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  riskFactor   RiskFactor     @relation(fields: [riskFactorId], references: [id], onDelete: Restrict)
+
+  @@unique([assessmentId, riskFactorId])
+}
+
+model RiskAssessmentReview {
+  id           String         @id @default(cuid())
+  assessmentId String
+  action       String
+  fromStatus   String
+  toStatus     String
+  comment      String?
+  actorId      String?
+  createdAt    DateTime       @default(now())
+  assessment   RiskAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId, createdAt])
+}
+
+model AuditEvent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  actorId     String?
+  action      String
+  objectType  String
+  objectId    String
+  before      String?
+  after       String?
+  requestId   String?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor       User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, objectType, objectId, createdAt])
+  @@index([workspaceId, createdAt])
+}
+
+model AuditPlan {
+  id           String                @id @default(cuid())
+  workspaceId  String
+  year         Int
+  name         String
+  objective    String
+  scope        String
+  periodStart  DateTime
+  periodEnd    DateTime
+  status       String                @default("draft")
+  version      Int                   @default(1)
+  isCurrent    Boolean               @default(true)
+  supersedesId String?
+  changeReason String?
+  ownerUserId  String
+  createdById  String?
+  updatedById  String?
+  submittedAt  DateTime?
+  approvedById String?
+  approvedAt   DateTime?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  workspace    Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  ownerUser    User                  @relation("PlanOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  approvedBy   User?                 @relation("PlanApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  engagements  AuditPlanEngagement[]
+  capacities   AuditPlanCapacity[]
+
+  @@unique([workspaceId, year, version])
+  @@index([workspaceId, year, isCurrent])
+  @@index([workspaceId, status])
+}
+
+model AuditPlanEngagement {
+  id               String                @id @default(cuid())
+  planId           String
+  entityId         String
+  riskAssessmentId String
+  title            String
+  engagementType   String                @default("operational")
+  quarter          Int?
+  plannedStart     DateTime?
+  plannedEnd       DateTime?
+  sourceRiskScore  Float
+  sourceRiskLevel  String
+  sourceRationale  String?
+  overrideScore    Float?
+  overrideReason   String?
+  riskScore        Float
+  riskLevel        String
+  estimatedHours   Float
+  actualHours      Float                 @default(0)
+  status           String                @default("planned")
+  notes            String?
+  sortOrder        Int                   @default(0)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  plan             AuditPlan             @relation(fields: [planId], references: [id], onDelete: Cascade)
+  entity           AuditEntity           @relation(fields: [entityId], references: [id], onDelete: Restrict)
+  riskAssessment   RiskAssessment        @relation(fields: [riskAssessmentId], references: [id], onDelete: Restrict)
+  allocations      AuditPlanAllocation[]
+  engagement       Engagement?
+
+  @@unique([planId, entityId])
+  @@index([planId, status, quarter])
+}
+
+model AuditPlanAllocation {
+  id             String              @id @default(cuid())
+  engagementId   String
+  role           String
+  estimatedHours Float
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  engagement     AuditPlanEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@unique([engagementId, role])
+}
+
+model AuditPlanCapacity {
+  id             String    @id @default(cuid())
+  planId         String
+  role           String
+  availableHours Float
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  plan           AuditPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, role])
+}
+
+model Engagement {
+  id               String                 @id @default(cuid())
+  workspaceId      String
+  code             String
+  title            String
+  engagementType   String                 @default("operational")
+  templateKey      String?
+  objective        String
+  scope            String
+  status           String                 @default("draft")
+  version          Int                    @default(1)
+  entityId         String
+  riskAssessmentId String?
+  planEngagementId String?                @unique
+  adHocReason      String?
+  startDate        DateTime
+  endDate          DateTime
+  budgetHours      Float
+  preparerId       String
+  reviewerId       String
+  approverId       String
+  createdById      String?
+  updatedById      String?
+  issuedAt         DateTime?
+  closedAt         DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  workspace        Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  entity           AuditEntity            @relation(fields: [entityId], references: [id], onDelete: Restrict)
+  riskAssessment   RiskAssessment?        @relation(fields: [riskAssessmentId], references: [id], onDelete: SetNull)
+  planEngagement   AuditPlanEngagement?   @relation(fields: [planEngagementId], references: [id], onDelete: SetNull)
+  preparer         User                   @relation("EngagementPreparer", fields: [preparerId], references: [id], onDelete: Restrict)
+  reviewer         User                   @relation("EngagementReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  approver         User                   @relation("EngagementApprover", fields: [approverId], references: [id], onDelete: Restrict)
+  rcmRows          EngagementRcmRow[]
+  transitions      EngagementTransition[]
+  workpapers       Workpaper[]
+  findings         Finding[]
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, status])
+  @@index([workspaceId, entityId])
+}
+
+model EngagementRcmRow {
+  id                   String     @id @default(cuid())
+  engagementId         String
+  sortOrder            Int        @default(0)
+  riskDescription      String
+  controlDescription   String
+  assertion            String
+  procedureDescription String
+  evidenceRequirement  String
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+  engagement           Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  workpapers           Workpaper[]
+  evidence             EvidenceFile[]
+  findings             Finding[]
+
+  @@index([engagementId, sortOrder])
+}
+
+model EngagementTransition {
+  id           String     @id @default(cuid())
+  engagementId String
+  action       String
+  fromStatus   String
+  toStatus     String
+  note         String?
+  actorId      String?
+  createdAt    DateTime   @default(now())
+  engagement   Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  actor        User?      @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([engagementId, createdAt])
+}
+
+model Workpaper {
+  id              String            @id @default(cuid())
+  engagementId    String
+  reference       String
+  title           String
+  purpose         String
+  procedure       String
+  conclusion      String            @default("")
+  templateKey     String?
+  rcmRowId        String?
+  status          String            @default("draft")
+  version         Int               @default(1)
+  preparerId      String
+  reviewerId      String
+  createdById     String?
+  updatedById     String?
+  submittedAt     DateTime?
+  reviewedAt      DateTime?
+  signedOffAt     DateTime?
+  signedOffById   String?
+  signedOffByName String?
+  signoffHash     String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  engagement      Engagement        @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  rcmRow          EngagementRcmRow? @relation(fields: [rcmRowId], references: [id], onDelete: SetNull)
+  preparer        User              @relation("WorkpaperPreparer", fields: [preparerId], references: [id], onDelete: Restrict)
+  reviewer        User              @relation("WorkpaperReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  signedOffBy     User?             @relation("WorkpaperSignoff", fields: [signedOffById], references: [id], onDelete: Restrict)
+  notes           WorkpaperNote[]
+  evidence        EvidenceFile[]
+  findings        Finding[]
+
+  @@unique([engagementId, reference])
+  @@index([engagementId, status])
+}
+
+model WorkpaperNote {
+  id           String    @id @default(cuid())
+  workpaperId  String
+  body         String
+  severity     String    @default("minor")
+  status       String    @default("open")
+  authorId     String
+  assigneeId   String?
+  resolution   String?
+  resolvedById String?
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  workpaper    Workpaper @relation(fields: [workpaperId], references: [id], onDelete: Cascade)
+  author       User      @relation("NoteAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  assignee     User?     @relation("NoteAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  resolvedBy   User?     @relation("NoteResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([workpaperId, status])
+}
+
+model EvidenceFile {
+  id            String            @id @default(cuid())
+  workpaperId   String
+  rcmRowId      String?
+  findingId     String?
+  label         String
+  fileName      String
+  storageKey    String
+  mimeType      String
+  sizeBytes     Int
+  sha256        String
+  source        String
+  periodLabel   String?
+  capturedAt    DateTime
+  version       Int               @default(1)
+  supersedesId  String?
+  uploadedById  String?
+  deletedAt     DateTime?
+  deletedById   String?
+  deleteReason  String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  workpaper     Workpaper         @relation(fields: [workpaperId], references: [id], onDelete: Cascade)
+  rcmRow        EngagementRcmRow? @relation(fields: [rcmRowId], references: [id], onDelete: SetNull)
+  finding       Finding?          @relation("FindingEvidence", fields: [findingId], references: [id], onDelete: SetNull)
+  uploadedBy    User?             @relation("EvidenceUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  deletedBy     User?             @relation("EvidenceDeleter", fields: [deletedById], references: [id], onDelete: SetNull)
+  supersedes    EvidenceFile?     @relation("EvidenceVersions", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy  EvidenceFile[]    @relation("EvidenceVersions")
+
+  @@unique([workpaperId, label, version])
+  @@index([workpaperId, deletedAt])
+}
+
+model Finding {
+  id                    String             @id @default(cuid())
+  engagementId          String
+  workpaperId           String?
+  rcmRowId              String?
+  reference             String
+  title                 String
+  condition             String
+  criteria              String
+  cause                 String             @default("")
+  effect                String             @default("")
+  recommendation        String             @default("")
+  severity              String             @default("medium")
+  status                String             @default("draft")
+  progressPercent       Int                @default(0)
+  version               Int                @default(1)
+  ownerUserId           String?
+  dueDate               DateTime?
+  managementResponse    String             @default("")
+  plannedAction         String             @default("")
+  createdById           String?
+  updatedById           String?
+  communicatedAt        DateTime?
+  remediationStartedAt  DateTime?
+  validationSubmittedAt DateTime?
+  validatedById         String?
+  closedAt              DateTime?
+  reopenedAt            DateTime?
+  riskAcceptedAt        DateTime?
+  riskAcceptedById      String?
+  riskJustification     String             @default("")
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  engagement            Engagement         @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  workpaper             Workpaper?         @relation(fields: [workpaperId], references: [id], onDelete: SetNull)
+  rcmRow                EngagementRcmRow?  @relation(fields: [rcmRowId], references: [id], onDelete: SetNull)
+  owner                 User?              @relation("FindingOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  validatedBy           User?              @relation("FindingValidator", fields: [validatedById], references: [id], onDelete: SetNull)
+  riskAcceptedBy        User?              @relation("FindingRiskAccepter", fields: [riskAcceptedById], references: [id], onDelete: SetNull)
+  updates               FindingUpdate[]
+  evidence              EvidenceFile[]     @relation("FindingEvidence")
+
+  @@unique([engagementId, reference])
+  @@index([engagementId, status])
+  @@index([ownerUserId, status])
+}
+
+model FindingUpdate {
+  id              String   @id @default(cuid())
+  findingId       String
+  body            String
+  statusFrom      String
+  statusTo        String
+  progressPercent Int      @default(0)
+  authorId        String
+  createdAt       DateTime @default(now())
+  finding         Finding  @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  author          User     @relation("FindingUpdateAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([findingId, createdAt])
+}
